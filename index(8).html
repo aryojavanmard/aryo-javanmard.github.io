@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AlphaBattle</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+/* VOICE: an honest build log for an ML project, dressed as a 2008 desktop.
+   IDEA: a battle monitor window: see exactly what the model reads and how it picks one legal token.
+   PICTURE: a dark terminal-style battle prompt beside glossy probability bars that react to the legal mask.
+   COLOUR and TYPE: sky, aqua and lime; Segoe UI or Open Sans Light, Consolas for the prompt.
+   LAYOUT: glass top bar with tabs, sky hero with stat orbs, then stacked Aero windows. */
+:root{color-scheme:light dark;
+--ink:light-dark(#1b2a38,#e6f2fb);--soft:light-dark(#4c6275,#a9c4d8);
+--client:light-dark(#ffffff,#16222e);--clientline:light-dark(#9fb3c4,#2d4356);
+--frame:light-dark(rgba(160,205,235,.62),rgba(40,80,110,.62));--frameedge:light-dark(rgba(255,255,255,.85),rgba(160,220,255,.35));
+--wall1:light-dark(#2fa9ec,#03121f);--wall2:light-dark(#9fe0ff,#073247);--grass1:light-dark(#8ee35a,#1f6b34);--grass2:light-dark(#2f9a24,#0d3a1d)}
+:root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+body{margin:0;color:var(--ink);font:16px/1.55 "Segoe UI","Open Sans",system-ui,sans-serif;background:#03121f;overflow-x:clip}
+h1,h2,h3{margin:0;line-height:1.1;text-wrap:balance}
+p{margin:0 0 10px;max-width:64ch}
+a{color:inherit}
+button{font:inherit;cursor:pointer}
+:focus-visible{outline:2px solid #7fe3ff;outline-offset:2px}
+
+/* glossy hard-band buttons, Web 2.0 style */
+.gbtn{position:relative;display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:40px;padding:0 18px;border:1px solid #0a4f7a;border-radius:6px;color:#fff;font-weight:600;text-decoration:none;text-shadow:0 -1px 0 rgba(0,40,70,.5);
+ background:linear-gradient(to bottom,#7fd4ff 0%,#2aa7e8 50%,#0b84c9 50%,#1ca0e0 100%);box-shadow:0 1px 2px rgba(0,0,0,.3),inset 0 0 0 1px rgba(255,255,255,.35)}
+.gbtn::before{content:"";position:absolute;left:5%;width:90%;top:1px;height:46%;border-radius:5px 5px 12px 12px;background:linear-gradient(rgba(255,255,255,.75),rgba(255,255,255,.1));opacity:.55;pointer-events:none}
+.gbtn:hover{filter:brightness(1.1)}
+.gbtn.lime{border-color:#2d6a0c;background:linear-gradient(to bottom,#c8f58a 0%,#79d23a 50%,#4cad15 50%,#6fcb2c 100%);text-shadow:0 -1px 0 rgba(20,60,0,.45)}
+
+.ico{width:48px;height:48px;border-radius:11px;position:relative;display:grid;place-items:center;box-shadow:0 3px 6px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.8)}
+.ico::after{content:"";position:absolute;left:4px;right:4px;top:2px;height:48%;border-radius:9px 9px 14px 14px;background:linear-gradient(rgba(255,255,255,.75),rgba(255,255,255,.05))}
+.ico svg{width:26px;height:26px;position:relative;z-index:1}
+.i-blue{background:linear-gradient(#64ccff,#0a7cc4)}.i-lime{background:linear-gradient(#b8f070,#3f9f12)}.i-orange{background:linear-gradient(#ffd06a,#f0870a)}.i-teal{background:linear-gradient(#6ff0e0,#0a9c8c)}.i-ink{background:linear-gradient(#7a8ea0,#2a3a4a)}
+
+/* aero windows */
+.win{position:relative;border-radius:8px;padding:0 7px 7px;background:linear-gradient(135deg,transparent 0 30%,rgba(255,255,255,.18) 30% 34%,transparent 34% 52%,rgba(255,255,255,.12) 52% 54%,transparent 54%),var(--frame);
+ border:1px solid rgba(0,0,0,.45);box-shadow:0 12px 34px rgba(0,0,0,.4),inset 0 0 0 1px var(--frameedge);backdrop-filter:blur(2px) saturate(1.3);-webkit-backdrop-filter:blur(2px) saturate(1.3);transition:opacity .18s,transform .18s}
+.win.min{opacity:0;transform:translateY(30px) scale(.92);pointer-events:none;visibility:hidden}
+.win.focus{box-shadow:0 18px 44px rgba(0,0,0,.5),inset 0 0 0 1px var(--frameedge),0 0 0 1px rgba(120,210,255,.4)}
+.tbar{display:flex;align-items:center;gap:8px;height:34px;padding-left:4px;cursor:default;user-select:none;touch-action:none}
+.tbar h2{flex:1;font-size:15px;font-weight:400;color:#000;text-shadow:0 0 10px #fff,0 0 4px #fff}
+:root[data-theme=dark] .tbar h2{color:#fff;text-shadow:0 0 8px #000}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) .tbar h2{color:#fff;text-shadow:0 0 8px #000}}
+.ctrls{display:flex;align-self:flex-start}
+.ctrls button{height:20px;border:1px solid rgba(0,0,0,.55);border-top:0;display:grid;place-items:center;padding:0;color:#fff;
+ background:linear-gradient(to bottom,rgba(255,255,255,.55) 0%,rgba(255,255,255,.2) 48%,rgba(0,40,70,.25) 50%,rgba(255,255,255,.25) 100%)}
+.ctrls .mn{width:28px;border-radius:0 0 0 5px}
+.ctrls .cl{width:46px;border-radius:0 0 5px 0;border-left:0;background:linear-gradient(to bottom,#f3a08d 0%,#d9533a 48%,#c0301a 50%,#e2694c 100%)}
+.ctrls svg{width:11px;height:11px}
+.client{background:var(--client);border:1px solid var(--clientline);border-radius:2px;padding:18px 20px}
+.cmdbar{display:flex;gap:2px;align-items:center;padding:4px 8px;margin:-18px -20px 14px;border-bottom:1px solid var(--clientline);font-size:14px;color:#fff;
+ background:linear-gradient(to bottom,#5f7d93 0%,#2d4b60 50%,#1c3a4f 50%,#2a4a60 100%)}
+.cmdbar span{padding:4px 8px;border-radius:3px}
+.addr{margin:-6px 0 14px;padding:5px 10px;border:1px solid var(--clientline);border-radius:3px;font-size:14px;color:var(--soft);background:light-dark(#f7fbfe,#0f1a24)}
+.addr b{color:var(--ink);font-weight:600}
+.client h3{font-size:22px;font-weight:300;margin-bottom:8px;color:light-dark(#1b5f8f,#7fd0ff)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chip{font-size:14px;padding:3px 10px;border-radius:999px;border:1px solid light-dark(#b6d6ea,#2d4c63);background:light-dark(linear-gradient(#ffffff,#e6f3fb),linear-gradient(#1d3242,#14232f))}
+.work{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:14px}
+.work li{display:grid;grid-template-columns:44px minmax(0,1fr);gap:12px}
+.work .ico{width:44px;height:44px}
+.work h4{margin:0;font-size:16px;font-weight:600}
+.work p{margin:2px 0 0;font-size:15px;color:var(--soft)}
+.apps{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:22px}
+.app{display:flex;flex-direction:column;gap:10px}
+.shot{position:relative;height:150px;border-radius:8px;overflow:hidden;border:1px solid rgba(0,0,0,.35);box-shadow:0 4px 10px rgba(0,0,0,.25);-webkit-box-reflect:below 3px linear-gradient(transparent 70%,rgba(255,255,255,.22))}
+.shot canvas{position:absolute;inset:0;width:100%;height:100%}
+.shot::after{content:"";position:absolute;left:0;right:0;top:0;height:48%;background:linear-gradient(rgba(255,255,255,.4),rgba(255,255,255,0))}
+.app h4{margin:16px 0 0;font-size:18px;font-weight:600}
+.app p{font-size:15px;color:var(--soft);margin:0}
+.star{position:absolute;left:-54px;top:-48px;width:86px;height:86px;display:grid;place-items:center;text-align:center;font-weight:600;font-size:14px;line-height:1.05;color:#5a2a00;transform:rotate(12deg);z-index:3;
+ clip-path:polygon(50% 0,59% 14%,75% 7%,77% 24%,93% 25%,86% 41%,100% 50%,86% 59%,93% 75%,77% 76%,75% 93%,59% 86%,50% 100%,41% 86%,25% 93%,23% 76%,7% 75%,14% 59%,0 50%,14% 41%,7% 25%,23% 24%,25% 7%,41% 14%);
+ background:radial-gradient(circle at 40% 35%,#fff6a8,#ffd21f 45%,#ff9d00)}
+
+/* gadgets */
+.gadgets{position:absolute;right:0;top:0;width:180px;display:flex;flex-direction:column;gap:16px}
+.gadget{border-radius:12px;padding:12px;color:#fff;text-align:center;background:linear-gradient(180deg,rgba(40,70,95,.75),rgba(10,25,40,.85));border:1px solid rgba(255,255,255,.35);box-shadow:0 6px 16px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.4)}
+.gadget small{display:block;font-size:13px;opacity:.85}
+.clockface{width:140px;height:140px;margin:0 auto}
+.gadget b{display:block;font-size:34px;font-weight:300;line-height:1.1}
+
+/* bubbles */
+.bubble{position:absolute;left:0;top:0;z-index:0;border:0;padding:0;border-radius:50%;cursor:pointer;
+ background:radial-gradient(circle at 32% 28%,rgba(255,255,255,.95) 0 9%,rgba(255,255,255,.15) 10% 45%,rgba(120,220,255,.25) 70%,rgba(255,255,255,.7) 100%);
+ box-shadow:inset 0 0 0 1px rgba(255,255,255,.75),0 2px 8px rgba(0,90,150,.15);transition:opacity .25s}
+.bubble.pop{opacity:0}
+
+/* gadgets */
+.gadgets{position:absolute;right:0;top:0;width:180px;display:flex;flex-direction:column;gap:16px}
+.gadget{border-radius:12px;padding:12px;color:#fff;text-align:center;background:linear-gradient(180deg,rgba(40,70,95,.75),rgba(10,25,40,.85));border:1px solid rgba(255,255,255,.35);box-shadow:0 6px 16px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.4)}
+.gadget small{display:block;font-size:13px;opacity:.85}
+.clockface{width:140px;height:140px;margin:0 auto}
+.gadget b{display:block;font-size:34px;font-weight:300;line-height:1.1}
+
+/* bubbles */
+.bubble{position:absolute;left:0;top:0;z-index:0;border:0;padding:0;border-radius:50%;cursor:pointer;
+ background:radial-gradient(circle at 32% 28%,rgba(255,255,255,.95) 0 9%,rgba(255,255,255,.15) 10% 45%,rgba(120,220,255,.25) 70%,rgba(255,255,255,.7) 100%);
+ box-shadow:inset 0 0 0 1px rgba(255,255,255,.75),0 2px 8px rgba(0,90,150,.15);transition:opacity .25s}
+.bubble.pop{opacity:0}
+
+html{scroll-padding-top:84px;scroll-behavior:smooth}
+@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+body{background:linear-gradient(180deg,var(--wall1),var(--wall2) 640px,light-dark(#e8f6ff,#06192a) 1000px)}
+.wrap{max-width:1120px;margin:0 auto;padding:0 max(3vw,14px)}
+
+/* top bar: aero glass with tabs */
+.topbar{position:sticky;top:0;z-index:50;color:#fff;
+ background:linear-gradient(135deg,transparent 0 62%,rgba(255,255,255,.14) 62% 65%,transparent 65%),linear-gradient(to bottom,rgba(110,160,195,.88) 0%,rgba(40,75,105,.92) 48%,rgba(12,32,52,.95) 50%,rgba(20,45,68,.95) 100%);
+ border-bottom:1px solid rgba(0,0,0,.5);box-shadow:0 4px 14px rgba(0,0,0,.3),inset 0 1px 0 rgba(255,255,255,.45);backdrop-filter:blur(2px)}
+.topbar .wrap{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;min-height:64px}
+.logo{display:flex;align-items:center;gap:10px;text-decoration:none;align-self:center;padding:8px 0}
+.logo i{width:40px;height:40px;border-radius:50%;position:relative;flex:none;border:1px solid rgba(0,20,40,.8);
+ background:radial-gradient(circle at 50% 85%,#7dffb8,transparent 55%),radial-gradient(circle at 50% 40%,#3fc6ff,#0a5aa0 75%);box-shadow:0 0 12px rgba(90,210,255,.7)}
+.logo i::before{content:"";position:absolute;left:12%;right:12%;top:2px;height:45%;border-radius:50%;background:linear-gradient(rgba(255,255,255,.85),rgba(255,255,255,0))}
+.logo b{font-size:21px;font-weight:300;letter-spacing:.01em;text-shadow:0 0 10px rgba(110,220,255,.6)}
+.navtabs{display:flex;gap:3px;align-self:flex-end;overflow-x:auto;scrollbar-width:none}
+.navtabs a{flex:none;position:relative;padding:9px 18px 8px;border-radius:7px 7px 0 0;text-decoration:none;font-size:15px;color:#e8f6ff;
+ background:linear-gradient(rgba(255,255,255,.22),rgba(255,255,255,.06));border:1px solid rgba(255,255,255,.28);border-bottom:0}
+.navtabs a:hover{background:linear-gradient(rgba(170,225,255,.45),rgba(90,160,210,.25))}
+.navtabs a[aria-current=true]{color:var(--ink);background:var(--client);border-color:rgba(255,255,255,.9);box-shadow:0 -2px 10px rgba(120,210,255,.55)}
+.navtabs a[aria-current=true]::before{content:"";position:absolute;left:8px;right:8px;top:0;height:3px;border-radius:0 0 3px 3px;background:linear-gradient(90deg,#3fc6ff,#7dffb8)}
+
+/* hero */
+.hero{position:relative;overflow:hidden;padding:56px 0 150px}
+.hero::after{content:"";position:absolute;left:-5%;right:-5%;bottom:-40px;height:150px;border-radius:50% 50% 0 0/100% 100% 0 0;background:linear-gradient(var(--grass1),var(--grass2));box-shadow:inset 0 10px 18px rgba(255,255,255,.35);z-index:0}
+.hero .flare{position:absolute;right:10%;top:-40px;width:320px;height:320px;border-radius:50%;background:radial-gradient(circle,light-dark(rgba(255,255,255,.95),rgba(80,255,200,.22)),transparent 65%);pointer-events:none}
+.hero .wrap{position:relative;z-index:1;display:grid;grid-template-columns:minmax(0,1fr) 200px;gap:32px;align-items:center}
+.intro{display:flex;gap:28px;align-items:center}
+.tile{flex:none;width:128px;height:128px;border-radius:14px;padding:8px;background:linear-gradient(180deg,rgba(255,255,255,.6),rgba(255,255,255,.2));border:1px solid rgba(255,255,255,.8);
+ box-shadow:0 8px 24px rgba(0,40,80,.35),inset 0 1px 0 #fff;-webkit-box-reflect:below 6px linear-gradient(transparent 62%,rgba(255,255,255,.3))}
+.tile .pic{width:100%;height:100%;border-radius:8px;position:relative;overflow:hidden;background:radial-gradient(circle at 50% 115%,#6dffb5,transparent 55%),radial-gradient(circle at 50% 40%,#3fc8ff,#0a64b5 70%,#06397a)}
+.tile .pic::after{content:"";position:absolute;left:8%;right:8%;top:3%;height:44%;border-radius:50%;background:linear-gradient(rgba(255,255,255,.85),rgba(255,255,255,0))}
+.tile .pic b{position:absolute;inset:0;display:grid;place-items:center;font-size:42px;font-weight:300;color:#fff;text-shadow:0 2px 8px rgba(0,40,90,.6)}
+.hero h1{font-size:clamp(38px,5.4vw,58px);font-weight:300;color:#fff;letter-spacing:-.01em;text-shadow:0 0 18px rgba(255,255,255,.45),0 2px 6px rgba(0,50,90,.45)}
+.hero .sub{font-size:clamp(17px,1.7vw,20px);font-weight:300;color:#fff;text-shadow:0 1px 3px rgba(0,50,90,.5);margin:10px 0 20px;max-width:46ch}
+.btns{display:flex;flex-wrap:wrap;gap:10px}
+
+/* sections as aero windows in normal flow */
+.sec{padding:26px 0}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:24px;align-items:start}
+.win{position:relative}
+.star{left:auto!important;right:-22px;top:-38px!important}
+footer{margin-top:40px;color:#fff;background:linear-gradient(to bottom,rgba(90,130,160,.95) 0%,rgba(30,55,80,.97) 48%,rgba(8,22,38,1) 50%,rgba(14,30,48,1) 100%);border-top:1px solid rgba(255,255,255,.45)}
+footer .wrap{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px 24px;min-height:56px;padding-block:10px;font-size:15px}
+footer nav{display:flex;flex-wrap:wrap;gap:6px 18px}
+footer a{color:#dff3ff}
+.contact{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.cbtn{display:flex;align-items:center;gap:12px;padding:12px;border-radius:8px;text-decoration:none;border:1px solid var(--clientline);background:light-dark(linear-gradient(#ffffff,#eef7fd),linear-gradient(#1b2b39,#132029))}
+.cbtn:hover{box-shadow:inset 0 0 0 1px light-dark(#7cc4ee,#3d7aa6),0 0 10px light-dark(rgba(80,180,240,.3),rgba(80,180,240,.2))}
+.cbtn small{display:block;font-size:13px;color:var(--soft)}
+.cbtn .ico{width:40px;height:40px;flex:none}
+@media(max-width:860px){.hero .wrap,.grid2{grid-template-columns:minmax(0,1fr)}.hero .gadget{display:none}}
+@media(max-width:600px){.intro{flex-direction:column;align-items:flex-start;gap:58px}.logo b{display:none}.navtabs a{padding:9px 12px 8px;font-size:14px}.star{left:auto!important;right:-6px;top:-40px!important;width:72px!important;height:72px!important;font-size:12px!important}}
+
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+/* HDE: the swarm chamber is a dark aurora "viewport" inside an Aero window */
+.hero{padding:48px 0 140px}
+.hero .wrap{grid-template-columns:minmax(0,1fr)}
+.hero h1{max-width:20ch}
+.lead{font-size:clamp(17px,1.7vw,20px);font-weight:300;color:#fff;text-shadow:0 1px 3px rgba(0,50,90,.5);margin:12px 0 20px;max-width:58ch}
+.pill{display:inline-block;font-size:13px;padding:3px 12px;border-radius:999px;color:#0b3a5a;background:linear-gradient(#ffffff,#d8f0ff);border:1px solid rgba(255,255,255,.9);box-shadow:0 2px 6px rgba(0,60,110,.25);margin-bottom:14px}
+.sec{padding:22px 0}
+.chamber{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:16px;align-items:stretch}
+.fig{position:relative;min-height:470px;border-radius:6px;overflow:hidden;border:1px solid #06243a;
+ background:radial-gradient(60% 50% at 30% 20%,rgba(61,255,176,.28),transparent 70%),radial-gradient(50% 45% at 75% 30%,rgba(42,125,255,.35),transparent 70%),linear-gradient(180deg,#03192c,#06344d 70%,#0a4f5e)}
+.fig>canvas,.fig>svg{position:absolute;inset:0;width:100%;height:100%}
+.fig::after{content:"";position:absolute;left:0;right:0;top:0;height:38%;background:linear-gradient(rgba(255,255,255,.12),rgba(255,255,255,0));pointer-events:none}
+.legend{position:absolute;left:12px;bottom:10px;display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13px;color:#dff3ff;pointer-events:none;z-index:1}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:-1px}
+.panel{display:flex;flex-direction:column;gap:12px}
+.seg{display:grid;grid-template-columns:1fr 1fr;border:1px solid #0a4f7a;border-radius:7px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.25)}
+.seg button{position:relative;border:0;min-height:42px;font-weight:600;color:#1b3a52;background:linear-gradient(to bottom,#ffffff 0%,#e6f2fa 50%,#d3e7f5 50%,#e8f4fc 100%)}
+.seg button+button{border-left:1px solid #9cc3dd}
+.seg button[aria-pressed=true]{color:#fff;text-shadow:0 -1px 0 rgba(0,40,70,.5);background:linear-gradient(to bottom,#7fd4ff 0%,#2aa7e8 50%,#0b84c9 50%,#1ca0e0 100%)}
+.lcd{border-radius:6px;padding:10px 12px;background:linear-gradient(#0f2a3c,#0a1d2a);border:1px solid #04121c;box-shadow:inset 0 2px 6px rgba(0,0,0,.6),0 1px 0 rgba(255,255,255,.5);color:#bff3ff;display:grid;gap:6px}
+.stat{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+.stat span{font-size:14px;color:#8fd9f5}
+.stat b{font-size:24px;font-weight:300;font-variant-numeric:tabular-nums;color:#e9fdff;text-shadow:0 0 8px rgba(110,230,255,.7)}
+.log{font-size:15px;line-height:1.45;min-height:66px;padding:10px 12px;border-radius:6px;border:1px solid var(--clientline);background:light-dark(linear-gradient(#fffdf2,#fff6d6),linear-gradient(#2a2614,#1e1b0e))}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.gbtn.silver{color:#1b3a52;text-shadow:0 1px 0 #fff;border-color:#7c97ab;background:linear-gradient(to bottom,#ffffff 0%,#eef5fa 50%,#d9e6ef 50%,#eef5fa 100%)}
+.gbtn.silver[aria-pressed=true]{color:#5a4300;border-color:#b58d00;background:linear-gradient(to bottom,#fff4b8 0%,#ffdc4a 50%,#f2c200 50%,#ffd84a 100%);text-shadow:0 1px 0 rgba(255,255,255,.6)}
+.note{font-size:13px;color:var(--soft)}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;align-items:start}
+.client h3{margin-top:4px}
+.client h4{margin:0 0 6px;font-size:17px;font-weight:600}
+/* rules */
+.rules{list-style:none;margin:0;padding:6px;display:flex;flex-direction:column;gap:2px;border:1px solid var(--clientline);border-radius:4px;background:light-dark(linear-gradient(#f6fbfe,#e9f3fa),linear-gradient(#17242f,#121d26))}
+.rules button{width:100%;text-align:left;border:1px solid transparent;background:transparent;color:var(--ink);padding:9px 10px;border-radius:4px;display:grid;grid-template-columns:34px 1fr;gap:10px;min-height:44px;align-items:center}
+.rules button:hover{background:light-dark(#e3f2fc,#1d3346);border-color:light-dark(#b7dcf3,#2f5d80)}
+.rules button[aria-pressed=true]{background:linear-gradient(light-dark(#dff1fd,#1f3b55),light-dark(#c3e4fa,#18324a));border-color:light-dark(#7cc4ee,#3d7aa6)}
+.rules .n{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;color:#fff;font-weight:600;font-size:14px;position:relative;background:linear-gradient(#64ccff,#0a7cc4);box-shadow:inset 0 1px 0 rgba(255,255,255,.8),0 1px 3px rgba(0,0,0,.3)}
+.rules small{display:block;font-size:14px;color:var(--soft);margin-top:1px}
+.track{display:flex;flex-direction:column;gap:12px}
+.lane{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.lane-l{width:100%;font-size:14px;color:var(--soft)}
+.node{position:relative;border:1px solid light-dark(#b8cfdf,#2d4356);border-radius:8px;padding:7px 11px;font-size:14px;line-height:1.25;color:var(--ink);background:light-dark(linear-gradient(#ffffff,#edf4f9),linear-gradient(#1d2c38,#16222c));transition:transform .2s,box-shadow .2s,background .2s}
+.node em{display:block;font-style:normal;font-size:12.5px;color:var(--soft)}
+.arr{color:var(--soft)}
+.node.on{color:#fff;border-color:#0a4f7a;text-shadow:0 -1px 0 rgba(0,40,70,.4);transform:translateY(-2px);box-shadow:0 4px 10px rgba(0,100,170,.35);background:linear-gradient(to bottom,#7fd4ff 0%,#2aa7e8 50%,#0b84c9 50%,#1ca0e0 100%)}
+.node.on em{color:#e3f6ff}
+.node.bad.on{border-color:#8a1f0d;background:linear-gradient(to bottom,#f6a690 0%,#de5a3e 50%,#c4361d 50%,#e26a4c 100%)}
+.node.sen.on{color:#4a3800;text-shadow:0 1px 0 rgba(255,255,255,.5);border-color:#b58d00;background:linear-gradient(to bottom,#fff4b8 0%,#ffdc4a 50%,#f2c200 50%,#ffd84a 100%)}
+.node.sen.on em{color:#5a4600}
+.explain{margin-top:14px;padding:12px 14px;border-radius:6px;min-height:92px;border:1px solid var(--clientline);background:light-dark(linear-gradient(#ffffff,#eef7fd),linear-gradient(#1b2b39,#132029))}
+/* calculators */
+.formula{white-space:pre-wrap;font-size:17px;font-weight:600;padding:10px 14px;border-radius:6px;overflow-x:auto;color:#e9fdff;background:linear-gradient(#0f2a3c,#0a1d2a);border:1px solid #04121c;box-shadow:inset 0 2px 6px rgba(0,0,0,.5);margin:6px 0 16px;font-family:Consolas,"Segoe UI",monospace}
+.calc{display:grid;grid-template-columns:280px minmax(0,1fr);gap:24px;align-items:start}
+.ctl{display:flex;flex-direction:column;gap:14px}
+.ctl label{display:flex;justify-content:space-between;font-size:15px}
+.ctl output{font-variant-numeric:tabular-nums;font-weight:600;color:light-dark(#0b6aa8,#7fd0ff)}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:30px;background:transparent}
+input[type=range]::-webkit-slider-runnable-track{height:8px;border-radius:4px;background:linear-gradient(#cfe1ee,#eef6fb);border:1px solid #8aa9bf;box-shadow:inset 0 1px 2px rgba(0,0,0,.2)}
+input[type=range]::-moz-range-track{height:8px;border-radius:4px;background:linear-gradient(#cfe1ee,#eef6fb);border:1px solid #8aa9bf}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;margin-top:-8px;border-radius:50%;border:1px solid #0a4f7a;background:radial-gradient(circle at 50% 30%,#ffffff,#7fd4ff 40%,#0b84c9 75%);box-shadow:0 1px 3px rgba(0,0,0,.35)}
+input[type=range]::-moz-range-thumb{width:22px;height:22px;border-radius:50%;border:1px solid #0a4f7a;background:radial-gradient(circle at 50% 30%,#ffffff,#7fd4ff 40%,#0b84c9 75%)}
+.out{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+.out div{padding:8px 12px;border-radius:6px;border:1px solid var(--clientline);background:light-dark(linear-gradient(#ffffff,#eef7fd),linear-gradient(#1b2b39,#132029))}
+.out b{display:block;font-size:26px;font-weight:300;font-variant-numeric:tabular-nums;color:light-dark(#0b6aa8,#7fd0ff);white-space:nowrap}
+.out span{font-size:13.5px;color:var(--soft)}
+.chart{position:relative;min-height:290px;border-radius:6px;border:1px solid var(--clientline);background:light-dark(#fbfdff,#101a23)}
+.chart svg{position:absolute;inset:0;width:100%;height:100%}
+.verdict{padding:10px 14px;border-radius:6px;font-weight:600;color:#fff;text-shadow:0 -1px 0 rgba(0,0,0,.3)}
+.verdict.good{border:1px solid #2d6a0c;background:linear-gradient(to bottom,#c8f58a 0%,#79d23a 50%,#4cad15 50%,#6fcb2c 100%)}
+.verdict.bad{border:1px solid #8a1f0d;background:linear-gradient(to bottom,#f6a690 0%,#de5a3e 50%,#c4361d 50%,#e26a4c 100%)}
+/* results */
+.tabs{display:flex;gap:3px;border-bottom:1px solid var(--clientline);margin:4px 0 16px}
+.tabs button{border:1px solid var(--clientline);border-bottom:0;border-radius:6px 6px 0 0;padding:8px 16px;min-height:40px;color:var(--ink);background:light-dark(linear-gradient(#f4f9fc,#dfeaf2),linear-gradient(#1d2c38,#16222c));margin-bottom:-1px}
+.tabs button[aria-pressed=true]{background:var(--client);font-weight:600;box-shadow:inset 0 3px 0 #2aa7e8}
+.bars{display:flex;flex-direction:column;gap:10px}
+.bar{display:grid;grid-template-columns:190px minmax(0,1fr) 64px;gap:10px;align-items:center;font-size:14.5px}
+.bar .t{height:22px;border-radius:11px;background:light-dark(linear-gradient(#e3ecf2,#f4f8fb),#0f1a23);border:1px solid light-dark(#b8cfdf,#2d4356);overflow:hidden;box-shadow:inset 0 1px 3px rgba(0,0,0,.15)}
+.bar .f{height:100%;border-radius:11px;transition:width .7s cubic-bezier(.2,.8,.2,1);background:linear-gradient(to bottom,#d9e3ea 0%,#a9b8c4 50%,#93a5b3 50%,#b2c0cb 100%)}
+.bar.hde .f{background:linear-gradient(to bottom,#7fd4ff 0%,#2aa7e8 50%,#0b84c9 50%,#1ca0e0 100%)}
+.bar b{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+table{border-collapse:collapse;width:100%;font-size:14.5px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--clientline);vertical-align:top}
+thead th{font-weight:600;background:light-dark(linear-gradient(#ffffff,#e6f0f7),linear-gradient(#22313d,#1a2631))}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.hl td{font-weight:600;background:light-dark(#e6f5ff,#15304a)}
+.scroll{overflow-x:auto}
+.limits{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+.limit{display:grid;grid-template-columns:40px minmax(0,1fr);gap:12px}
+.warn{width:40px;height:36px;clip-path:polygon(50% 0,100% 100%,0 100%);display:grid;place-items:end center;padding-bottom:3px;font-weight:700;color:#5a4300;background:linear-gradient(#fff2a0,#f5c400)}
+.limit h4{font-size:16px}
+.limit p{font-size:15px;margin:0}
+footer .wrap{font-size:14px}
+.reveal{opacity:0;transform:scale(.97) translateY(14px);transition:opacity .45s ease,transform .45s cubic-bezier(.2,.8,.2,1)}
+.reveal.in{opacity:1;transform:none}
+@media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none}}
+@media(max-width:900px){.chamber,.two,.calc{grid-template-columns:minmax(0,1fr)}.fig{min-height:380px}}
+@media(max-width:600px){.fig{min-height:340px}.bar{grid-template-columns:minmax(0,1fr) 60px}.bar .t{grid-column:1/-1;grid-row:2}
+ table{font-size:13px}.stack thead{display:none}.stack tr{display:grid;padding-block:8px}.stack td{display:flow-root;border:0;padding:3px 0;padding-inline-start:8em}.stack td::before{content:attr(data-l);float:inline-start;width:7.5em;margin-inline-start:-8em;color:var(--soft)}}
+
+.orbs{display:flex;gap:16px;flex-wrap:wrap;margin:0 0 22px}
+.orb{width:108px;height:108px;border-radius:50%;display:grid;place-content:center;text-align:center;color:#fff;position:relative;background:radial-gradient(circle at 50% 115%,#7dffb8,transparent 55%),radial-gradient(circle at 50% 40%,#5fd0ff,#0a6bbf 75%);border:1px solid rgba(255,255,255,.7);box-shadow:0 10px 18px rgba(0,60,110,.35),inset 0 0 0 1px rgba(255,255,255,.3)}
+.orb::before{content:"";position:absolute;left:14%;right:14%;top:4%;height:42%;border-radius:50%;background:linear-gradient(rgba(255,255,255,.85),rgba(255,255,255,0))}
+.orb b{font-size:28px;font-weight:300;line-height:1;position:relative;text-shadow:0 1px 4px rgba(0,40,90,.5)}
+.orb span{font-size:12px;position:relative;max-width:84px;line-height:1.2;margin-top:3px}
+.orb.win{background:radial-gradient(circle at 50% 115%,#fff59a,transparent 55%),radial-gradient(circle at 50% 40%,#b6f56e,#3f9f12 75%)}
+@media(max-width:600px){.orb{width:92px;height:92px}.orb b{font-size:23px}}
+.mono{font-family:Consolas,"Cascadia Mono","DejaVu Sans Mono",monospace}
+.prompt{white-space:pre;overflow:auto;font-size:13px;line-height:1.5;padding:12px 14px;border-radius:6px;color:#d6f3ff;background:linear-gradient(#0f2a3c,#0a1d2a);border:1px solid #04121c;box-shadow:inset 0 2px 6px rgba(0,0,0,.5);max-height:420px}
+.prompt .k{color:#7fdcff}.prompt .h{color:#b6ff8a}.prompt .w{color:#ffd76a}
+.demo{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1fr);gap:18px;align-items:start}
+.toggles{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+.probs{display:flex;flex-direction:column;gap:5px}
+.prob{display:grid;grid-template-columns:30px 150px minmax(0,1fr) 56px;gap:8px;align-items:center;font-size:14px}
+.prob .tok{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;font-weight:700;color:#fff;font-family:Consolas,monospace;background:linear-gradient(#64ccff,#0a7cc4);box-shadow:inset 0 1px 0 rgba(255,255,255,.7)}
+.prob.ill .tok{background:linear-gradient(#c9d3db,#8a99a6)}
+.prob .t{height:16px;border-radius:8px;overflow:hidden;background:light-dark(linear-gradient(#e3ecf2,#f4f8fb),#0f1a23);border:1px solid light-dark(#b8cfdf,#2d4356)}
+.prob .f{height:100%;border-radius:8px;transition:width .5s cubic-bezier(.2,.8,.2,1);background:linear-gradient(to bottom,#7fd4ff 0%,#2aa7e8 50%,#0b84c9 50%,#1ca0e0 100%)}
+.prob.ill .f{background:linear-gradient(to bottom,#ffb4a2 0%,#e2694c 50%,#c4361d 50%,#e2694c 100%)}
+.prob.pick .f{background:linear-gradient(to bottom,#c8f58a 0%,#79d23a 50%,#4cad15 50%,#6fcb2c 100%)}
+.prob b{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+.prob.ill span:nth-child(2){color:var(--soft);text-decoration:line-through}
+.verdictbox{margin-top:12px;padding:10px 12px;border-radius:6px;border:1px solid var(--clientline);background:light-dark(linear-gradient(#fffdf2,#fff6d6),linear-gradient(#2a2614,#1e1b0e));font-size:15px;min-height:64px}
+/* pipeline */
+.pipe{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin-bottom:14px}
+.stage{position:relative;flex:1 1 150px;text-align:left;border:1px solid light-dark(#b8cfdf,#2d4356);border-radius:8px;padding:10px 12px 10px;min-height:86px;color:var(--ink);background:light-dark(linear-gradient(#ffffff,#edf4f9),linear-gradient(#1d2c38,#16222c));box-shadow:0 2px 6px rgba(0,60,110,.12);transition:transform .2s,box-shadow .2s}
+.stage b{display:block;font-size:15px}
+.stage small{display:block;font-size:13px;color:var(--soft);margin-top:2px}
+.stage .chipst{position:absolute;right:8px;top:8px;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;color:#fff}
+.st-done{background:linear-gradient(#a5ee77,#3f9f12)}.st-next{background:linear-gradient(#64ccff,#0a7cc4)}.st-plan{background:linear-gradient(#b8c6d1,#7f93a3)}
+.stage[aria-pressed=true]{transform:translateY(-3px);border-color:#0a4f7a;box-shadow:0 6px 14px rgba(0,100,170,.3),0 0 0 2px #2aa7e8}
+.stagedetail{padding:12px 14px;border-radius:6px;min-height:110px;border:1px solid var(--clientline);background:light-dark(linear-gradient(#ffffff,#eef7fd),linear-gradient(#1b2b39,#132029))}
+.stagedetail h4{margin:0 0 6px;font-size:17px}
+.gate{display:inline-block;margin-top:6px;padding:4px 10px;border-radius:6px;font-size:14px;font-weight:600;color:light-dark(#1f5a0a,#c8f5a0);border:1px solid light-dark(#9fd77a,#3d6a24);background:light-dark(linear-gradient(#f4fde9,#ddf5c6),linear-gradient(#1d2d14,#16240f))}
+/* results */
+.cichart{position:relative;min-height:250px;border-radius:6px;border:1px solid var(--clientline);background:light-dark(#fbfdff,#101a23)}
+.cichart svg{position:absolute;inset:0;width:100%;height:100%}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}
+.kpis div{padding:8px 12px;border-radius:6px;border:1px solid var(--clientline);background:light-dark(linear-gradient(#ffffff,#eef7fd),linear-gradient(#1b2b39,#132029))}
+.kpis b{display:block;font-size:26px;font-weight:300;color:light-dark(#0b6aa8,#7fd0ff);font-variant-numeric:tabular-nums;white-space:nowrap}
+.kpis span{font-size:13.5px;color:var(--soft)}
+/* vram */
+.models{display:flex;flex-wrap:wrap;border:1px solid #0a4f7a;border-radius:7px;overflow:hidden;margin-bottom:14px;width:max-content;max-width:100%}
+.models button{border:0;min-height:40px;padding:0 14px;font-weight:600;color:#1b3a52;background:linear-gradient(to bottom,#ffffff 0%,#e6f2fa 50%,#d3e7f5 50%,#e8f4fc 100%)}
+.models button+button{border-left:1px solid #9cc3dd}
+.models button[aria-pressed=true]{color:#fff;text-shadow:0 -1px 0 rgba(0,40,70,.5);background:linear-gradient(to bottom,#7fd4ff 0%,#2aa7e8 50%,#0b84c9 50%,#1ca0e0 100%)}
+.vbar{position:relative;height:44px;border-radius:8px;border:1px solid light-dark(#9fb3c4,#2d4356);background:light-dark(linear-gradient(#eef3f7,#f9fbfd),#0f1a23);overflow:visible;margin:28px 0 30px}
+.vbar .seg2{position:absolute;top:0;bottom:0;transition:left .5s,width .5s;border-right:1px solid rgba(255,255,255,.6)}
+.vbar .seg2::after{content:"";position:absolute;left:0;right:0;top:0;height:46%;background:linear-gradient(rgba(255,255,255,.55),rgba(255,255,255,0))}
+.vbar .line{position:absolute;top:-24px;bottom:-6px;width:2px;background:#c4361d}
+.vbar .line span{position:absolute;top:0;left:6px;font-size:12.5px;font-weight:600;color:#c4361d;white-space:nowrap}
+.vbar .line.l12{top:-6px;bottom:-24px;background:#7f93a3}.vbar .line.l12 span{top:auto;bottom:0;color:var(--soft);font-weight:400}
+.vlegend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:13.5px;margin-bottom:10px}
+.vlegend i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.card{padding:12px 14px;border-radius:6px;border:1px solid var(--clientline);background:light-dark(linear-gradient(#ffffff,#eef7fd),linear-gradient(#1b2b39,#132029))}
+.card h4{margin:0 0 4px;font-size:16px}.card p{margin:0;font-size:15px}
+.card a{color:light-dark(#0b6aa8,#7fd0ff)}
+@media(max-width:900px){.demo{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:600px){.prob{grid-template-columns:28px minmax(0,1fr) 52px}.prob .t{grid-column:1/-1;grid-row:2}.prompt{font-size:12px}}
+
+</style>
+<script>new MutationObserver(()=>{for(const c of document.querySelectorAll('.stack td:not([data-l])')){let i=0,p=c;while(p=p.previousElementSibling)i+=p.colSpan;c.dataset.l=c.closest('table').rows[0].cells[i]?.textContent||''}}).observe(document,{childList:true,subtree:true})</script>
+</head><body>
+<header class="topbar"><div class="wrap">
+<a class="logo" href="https://aryojavanmard.github.io/aryo-javanmard.github.io/"><i aria-hidden="true"></i><b>Aryo Javanmard</b></a>
+<nav class="navtabs" aria-label="Sections"><a href="#battle">Monitor</a><a href="#why">Model</a><a href="#pipeline">Pipeline</a><a href="#results">Results</a><a href="#prior">Prior work</a><a href="#limits">Risks</a></nav>
+</div></header>
+<section class="hero" id="top"><div class="flare" aria-hidden="true"></div><div class="wrap"><div>
+<span class="pill">AlphaBattle, work in progress</span>
+<h1>Teaching a small language model to win Pokémon battles</h1>
+<p class="lead">I'm post-training a 1.7B open model on my own 12 GB gaming GPU to play Pokémon Showdown Random Battles: first by imitating high-rated players, then by reinforcement learning on live battles. Success means win rate and ladder Elo, not convincing-sounding reasoning.</p>
+<div class="orbs"><div class="orb"><b>1.7B</b><span>parameter model</span></div><div class="orb"><b>13</b><span>possible actions per turn</span></div><div class="orb win"><b>0%</b><span>illegal moves, by design</span></div></div>
+<div class="btns"><a class="gbtn" href="#battle">See how it thinks</a><a class="gbtn lime" href="https://github.com/aryojavanmard/alphabattle">View the code</a></div>
+</div></div></section>
+<main>
+<div class="wrap sec"><section class="win reveal" id="battle" aria-labelledby="t-battle"><div class="tbar"><h2 id="t-battle">Battle Monitor</h2></div><div class="client"><p>Every turn, the battle is written out as compact text (about 475 tokens). The model answers with a <b>single token</b> from a fixed set of 13: <span class="mono">1–4</span> for moves, <span class="mono">A–D</span> for Terastallize plus a move, and <span class="mono">5–9</span> for switches. Illegal tokens are masked out before choosing, so it can never make an illegal move.</p>
+<div class="demo">
+<div><div class="prompt mono" aria-label="Example battle state prompt"><span class="k">FORMAT</span> gen9randombattle  <span class="k">TURN</span> 6  <span class="k" id="teraLine">TERA: used</span>
+<span class="k">FIELD</span> opp_side: Stealth Rock
+<span class="k">MY_ACTIVE</span> Garchomp L77 Ground/Dragon HP 231/290 item:Loaded Dice
+  ability:Rough Skin spe:227 boosts:none
+<span class="k">OPP_ACTIVE</span> Rotom-Wash L84 Water/Electric HP 71%
+  <span class="w">ability:Levitate (revealed)</span> seen: Volt Switch, Hydro Pump
+<span class="k">MY_BENCH</span> Corviknight 100% | Kingambit 64% | Primarina 100%
+  | Toxapex 38% | Skeledirge FNT
+<span class="k">OPP_BENCH</span> (unseen=3) Gholdengo 100% | Great Tusk 55%
+<span class="k">HISTORY</span> T5 me:Stealth Rock opp:Volt Switch -&gt; Garchomp 80%
+<span class="k">LEGAL_ACTIONS</span>
+ <span class="h">1</span> Earthquake  Ground phys BP100 <span class="w">eff x2 (but Levitate)</span> STAB
+ <span class="h">2</span> Outrage     Dragon phys BP120 eff x1 STAB lock
+ <span class="h">3</span> Stealth Rock  status hazard
+ <span class="h">4</span> Swords Dance  status boost:+2atk
+ <span class="h">5</span> Corviknight  takes: Water x1 Electric x2
+ <span class="h">6</span> Kingambit    takes: Water x1 Electric x1
+ <span class="h">7</span> Primarina    takes: Water x0.5 Electric x2
+ <span class="h">8</span> Toxapex      takes: Water x0.5 Electric x1
+<span class="k">ACTION:</span></div><p class="note" style="margin-top:6px">A simplified example state. The hints are computed by code; knowing that Levitate makes Rotom-Wash immune to Earthquake is up to the model.</p></div>
+<div><div class="toggles"><button class="gbtn" id="mBtn" aria-pressed="true">Legal mask: on</button><button class="gbtn silver" id="tBtn" aria-pressed="false">Tera used</button></div>
+<div class="probs" id="probs"></div>
+<div class="verdictbox" id="verdict" aria-live="polite"></div>
+<p class="note" style="margin-top:8px">Illustrative logits, not output from a trained checkpoint. The mechanism (mask, softmax, single-token pick) is exactly what AlphaBattle does.</p></div>
+</div></div></section></div>
+<div class="wrap sec"><section class="win reveal" id="why" aria-labelledby="t-why"><div class="tbar"><h2 id="t-why">Choosing the model</h2></div><div class="client"><div class="two"><div>
+<h3>Why 1.7 billion parameters, not 12</h3>
+<p>A 12B model will <i>run</i> on a 12 GB card in 4-bit, but training needs room for gradients, optimiser state and activations too. On Windows the desktop also takes 1.5–2 GB, and going over the limit doesn't crash: it silently spills into system RAM and runs 10–30× slower.</p>
+<p>In reinforcement learning, <b>battles per hour matter more than parameter count</b>. The strongest Pokémon networks in the literature are tiny specialists. A 1.7B model that plays tens of thousands of practice battles should beat an 8B model that only manages a few hundred.</p>
+</div><div>
+<div class="models" role="group" aria-label="Model size"><button data-k="0.6B">0.6B</button><button data-k="1.7B">1.7B</button><button data-k="4B QLoRA">4B QLoRA</button><button data-k="8B QLoRA">8B QLoRA</button><button data-k="12B QLoRA">12B QLoRA</button></div>
+<div class="vlegend" id="vlegend"></div>
+<div class="vbar" id="vbar" role="img" aria-label="Estimated training VRAM against the usable limit"></div>
+<div class="kpis" style="margin-top:12px"><div><b id="vtotal"></b><span>training memory</span></div></div>
+<p id="vnote" style="margin:0 0 6px"></p><p class="note" id="vspeed" style="margin:0"></p>
+<p class="note" style="margin-top:8px">Estimates from the project's planning, except 0.6B, which was measured.</p>
+</div></div></div></section></div>
+<div class="wrap sec"><section class="win reveal" id="pipeline" aria-labelledby="t-pipeline"><div class="tbar"><h2 id="t-pipeline">Training pipeline</h2></div><div class="client"><p>Each stage has a pass/fail gate decided before it runs, the same habit that kept my earlier research honest. Click a stage.</p>
+<div class="pipe" id="pipe"></div><div class="stagedetail" id="stagedetail" aria-live="polite"></div></div></section></div>
+<div class="wrap sec"><section class="win reveal" id="results" aria-labelledby="t-results"><div class="tbar"><h2 id="t-results">Results so far</h2></div><div class="client"><h3>First live results: a 0.6B smoke test</h3>
+<p>Before spending hours on the real model, I distilled a heuristic bot into Qwen3-0.6B-Base (500 recorded battles, one epoch) and played it live on a local Showdown server, 40 games against each opponent.</p>
+<div class="kpis"><div><b>87.4%</b><span>validation top-1 accuracy</span></div><div><b>2.85 GiB</b><span>peak training VRAM</span></div><div><b>0.00%</b><span>illegal or fallback moves</span></div><div><b>120</b><span>live battles played</span></div></div>
+<div class="cichart" id="ci"><svg id="cisvg" role="img" aria-label="Win rates with 95% confidence intervals against three bots"></svg></div>
+<div class="scroll" style="margin-top:12px"><table><thead><tr><th>Opponent</th><th class="num">W–L</th><th class="num">Win rate</th><th class="num">95% CI</th></tr></thead><tbody>
+<tr><td>RandomPlayer</td><td class="num">40–0</td><td class="num">100.0%</td><td class="num">91.2–100%</td></tr>
+<tr><td>MaxBasePowerPlayer</td><td class="num">35–5</td><td class="num">87.5%</td><td class="num">73.9–94.5%</td></tr>
+<tr><td>SimpleHeuristicsPlayer</td><td class="num">27–13</td><td class="num">67.5%</td><td class="num">52.0–79.9%</td></tr></tbody></table></div>
+<p style="margin-top:12px">The model narrowly beat the very bot it learned from, but 40 games is a small sample and beating simple bots says little about beating people. This proves the pipeline works end to end; the real test is the 1.7B model on human replays, then the ladder.</p></div></section></div>
+<div class="wrap sec"><section class="win reveal" id="prior" aria-labelledby="t-prior"><div class="tbar"><h2 id="t-prior">Prior work</h2></div><div class="client"><p>Pokémon battling is an active research area, so this builds on a lot of existing work rather than starting from scratch.</p><div class="cards">
+<div class="card"><h4>Pokémon Showdown and poke-env</h4><p>The open-source battle simulator, run locally, and the Python library AlphaBattle uses to read battle state and send moves.</p></div>
+<div class="card"><h4>PokéLLMon (2024)</h4><p>A prompted GPT-4 agent. It found LLMs tend to panic-switch and misremember mechanics, and that feeding them structured move information helps.</p></div>
+<div class="card"><h4>PokéChamp (2025)</h4><p>Combines an LLM with minimax search. Much of its strength comes from the search, not the language model.</p></div>
+<div class="card"><h4>Metamon (UT Austin, 2025)</h4><p>Small non-LLM transformers trained on human replays plus self-play. A key lesson I borrowed: pure self-play overfits, and a diverse opponent pool helps.</p></div>
+<div class="card"><h4>Foul Play</h4><p>A strong search-based bot. I plan to use it as the expert ceiling to measure against.</p></div>
+<div class="card"><h4>The open question</h4><p>Can a small, pretrained language model learn to play well with far fewer battles than a network trained from scratch, because it already knows the game from the web?</p></div></div></div></section></div>
+<div class="wrap sec"><section class="win reveal" id="limits" aria-labelledby="t-limits"><div class="tbar"><h2 id="t-limits">Risks, written down early</h2></div><div class="client"><p>What I expect to be hard, written down before the results come in.</p><div class="limits">
+<div class="limit"><span class="warn">!</span><div><h4>Specialist bots will probably win</h4><p>Search bots and small RL networks play many more games per hour. The interesting result is how close a language model gets, and how few battles it needs.</p></div></div>
+<div class="limit"><span class="warn">!</span><div><h4>Bot win rates can flatter</h4><p>Beating heuristic bots doesn't mean beating humans. Only the public ladder settles that, so it's the final gate.</p></div></div>
+<div class="limit"><span class="warn">!</span><div><h4>Replays hide information</h4><p>Public replays only show what each player revealed, while a real player sees their whole team. Reconstructing the player's view without leaking the future is fiddly.</p></div></div>
+<div class="limit"><span class="warn">!</span><div><h4>Random Battles are noisy</h4><p>Team luck decides a lot of games, so every result is reported with confidence intervals and enough games to mean something.</p></div></div></div></div></section></div>
+</main>
+<footer><div class="wrap"><span>AlphaBattle, an independent project by Aryo Javanmard, 2026. Pokémon is a trademark of Nintendo, Game Freak and Creatures; this is an unaffiliated fan research project.</span><nav aria-label="Footer"><a href="https://aryojavanmard.github.io/aryo-javanmard.github.io/">Home</a><a href="https://aryojavanmard.github.io/hde/">HDE</a><a href="https://github.com/aryojavanmard/alphabattle">Code</a></nav><span>Bubbles popped: <b id="tPop">0</b></span></div></footer>
+<script>{
+const $=id=>document.getElementById(id);
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/* ---------- masked-action demo (illustrative logits) ---------- */
+const ACT=[
+ {id:'1',name:'Earthquake',logit:-0.6,kind:'move'},
+ {id:'2',name:'Outrage',logit:2.3,kind:'move'},
+ {id:'3',name:'Stealth Rock',logit:1.1,kind:'move'},
+ {id:'4',name:'Swords Dance',logit:1.5,kind:'move'},
+ {id:'A',name:'Tera + Earthquake',logit:-1.2,kind:'tera'},
+ {id:'B',name:'Tera + Outrage',logit:1.0,kind:'tera'},
+ {id:'C',name:'Tera + Stealth Rock',logit:-0.4,kind:'tera'},
+ {id:'D',name:'Tera + Swords Dance',logit:0.3,kind:'tera'},
+ {id:'5',name:'Switch: Corviknight',logit:0.4,kind:'sw'},
+ {id:'6',name:'Switch: Kingambit',logit:0.9,kind:'sw'},
+ {id:'7',name:'Switch: Primarina',logit:-0.2,kind:'sw'},
+ {id:'8',name:'Switch: Toxapex',logit:-0.8,kind:'sw'},
+ {id:'9',name:'Switch slot 5 (fainted)',logit:0.6,kind:'dead'}];
+let mask=true,tera=false;
+function legal(a){if(a.kind==='dead')return false;if(a.kind==='tera')return tera;return true}
+function renderDemo(){
+  const xs=ACT.map(a=>(!mask||legal(a))?Math.exp(a.logit):0),Z=xs.reduce((s,x)=>s+x,0),p=xs.map(x=>x/Z);
+  const best=p.indexOf(Math.max(...p));
+  $('probs').innerHTML=ACT.map((a,i)=>{const ill=!legal(a);return`<div class="prob${ill?' ill':''}${i===best?' pick':''}"><span class="tok">${a.id}</span><span>${a.name}</span><div class="t"><div class="f" style="width:${(p[i]*100).toFixed(1)}%"></div></div><b>${(p[i]*100).toFixed(1)}%</b></div>`}).join('');
+  const illMass=ACT.reduce((s,a,i)=>s+(legal(a)?0:p[i]),0);
+  $('verdict').innerHTML=mask
+    ? `With the mask on, illegal tokens get a logit of −∞, so they get exactly 0% and every decision is legal by construction. The policy picks <b>${ACT[best].id}: ${ACT[best].name}</b>.`
+    : `Without the mask, <b>${(illMass*100).toFixed(1)}%</b> of the probability sits on actions that aren't legal right now. A free-text model would have to be parsed and corrected; masking removes the problem entirely.`;
+  $('mBtn').setAttribute('aria-pressed',mask);$('mBtn').textContent=mask?'Legal mask: on':'Legal mask: off';
+  $('tBtn').setAttribute('aria-pressed',tera);$('tBtn').textContent=tera?'Tera available':'Tera used';
+  $('teraLine').textContent=tera?'TERA: available (Steel)':'TERA: used';
+}
+$('mBtn').onclick=()=>{mask=!mask;renderDemo()};
+$('tBtn').onclick=()=>{tera=!tera;renderDemo()};
+renderDemo();
+
+/* ---------- pipeline ---------- */
+const STAGES=[
+ ['Setup','done','Local Showdown + eval harness','A local Pokémon Showdown server on Windows, a poke-env player that calls the model, and an eval script that reports win rates with Wilson 95% confidence intervals. 23 unit tests pass.','All tests pass; 0.00% fallback moves'],
+ ['Smoke test','done','0.6B distilled from a heuristic bot','Recorded 500 local heuristic-vs-heuristic battles (21,451 turns), fine-tuned Qwen3-0.6B-Base with LoRA, then played it live. Validation top-1 accuracy was 87.4% and peak VRAM was 2.85 GiB.','≥85% top-1 and ~50% vs its teacher: passed'],
+ ['Human SFT','next','Qwen3-1.7B on high-Elo replays','Reconstruct Gen 9 Random Battle replays from players rated 1550+ into the bot\'s own point of view, keeping the opponent\'s hidden information hidden, then LoRA fine-tune Qwen3-1.7B-Base on about 250K turns.','>60% vs SimpleHeuristics over 200 games, CI lower bound >55%'],
+ ['Value head','plan','Teach it who\'s winning','Freeze the policy and train a small value head to predict the battle outcome from the current state. This lets RL tell a good play in a bad matchup from a bad play in a good one.','ROC-AUC >0.75 on held-out replays'],
+ ['PPO','plan','Reinforcement learning on live battles','Online masked-action PPO against a mixed pool: recent self, past checkpoints, heuristic bots and the frozen SFT model, with a KL penalty to stop it drifting away from sensible play.','Beats the SFT model >58% and heuristics >80%'],
+ ['Ladder','plan','The test nobody can game','A pre-registered 100-game run on the public Showdown ladder, plus a match against a strong search-based bot as a reality check.','Target: 1400–1600 Elo']];
+const pipe=$('pipe');
+pipe.innerHTML=STAGES.map((s,i)=>`<button class="stage" data-i="${i}"><span class="chipst st-${s[1]}">${s[1]==='done'?'Done':s[1]==='next'?'Next':'Planned'}</span><b>${i+1}. ${s[0]}</b><small>${s[2]}</small></button>`).join('');
+function pick(i){pipe.querySelectorAll('.stage').forEach(b=>b.setAttribute('aria-pressed',b.dataset.i==i));const s=STAGES[i];$('stagedetail').innerHTML=`<h4>${i+1}. ${s[0]}: ${s[2]}</h4><p style="margin:0">${s[3]}</p><span class="gate">Gate: ${s[4]}</span>`}
+pipe.onclick=e=>{const b=e.target.closest('.stage');if(b)pick(+b.dataset.i)};pick(2);
+
+/* ---------- results with confidence intervals ---------- */
+const RES=[['RandomPlayer',40,0,91.2,100],['MaxBasePowerPlayer',35,5,73.9,94.5],['SimpleHeuristicsPlayer',27,13,52.0,79.9]];
+const ci=$('ci'),svg=$('cisvg');
+function drawCI(){
+  const w=ci.clientWidth,h=ci.clientHeight,small=w<520,m={l:small?12:190,r:20,t:18,b:34},rowH=(h-m.t-m.b)/RES.length;
+  const x=v=>m.l+(v/100)*(w-m.l-m.r);let g='';
+  [0,25,50,75,100].forEach(v=>{g+=`<line x1="${x(v)}" x2="${x(v)}" y1="${m.t}" y2="${h-m.b}" stroke="currentColor" stroke-opacity="${v===50?.35:.1}" ${v===50?'stroke-dasharray="4 4"':''}/><text x="${x(v)}" y="${h-12}" text-anchor="middle" font-size="12" fill="currentColor" fill-opacity=".6">${v}%</text>`});
+  RES.forEach((r,i)=>{const y=m.t+rowH*i+rowH/2,wr=r[1]/(r[1]+r[2])*100;
+    if(!small)g+=`<text x="${m.l-12}" y="${y+4}" text-anchor="end" font-size="13.5" fill="currentColor">${r[0]}</text>`;
+    else g+=`<text x="${m.l}" y="${y-14}" font-size="12.5" fill="currentColor">${r[0]}</text>`;
+    g+=`<line x1="${x(r[3])}" x2="${x(r[4])}" y1="${y}" y2="${y}" stroke="#0b84c9" stroke-width="3" stroke-linecap="round"/><line x1="${x(r[3])}" x2="${x(r[3])}" y1="${y-7}" y2="${y+7}" stroke="#0b84c9" stroke-width="2"/><line x1="${x(r[4])}" x2="${x(r[4])}" y1="${y-7}" y2="${y+7}" stroke="#0b84c9" stroke-width="2"/>`;
+    g+=`<circle cx="${x(wr)}" cy="${y}" r="8" fill="url(#gl)" stroke="#2d6a0c"/><text x="${x(wr)}" y="${y-13}" text-anchor="middle" font-size="12.5" font-weight="700" fill="currentColor">${wr.toFixed(1)}%</text>`});
+  svg.style.color=getComputedStyle(document.body).color;
+  svg.innerHTML=`<defs><radialGradient id="gl" cx=".4" cy=".3" r=".8"><stop offset="0" stop-color="#e6ffc8"/><stop offset="1" stop-color="#4cad15"/></radialGradient></defs>`+g+(small?'':`<text x="${x(50)+6}" y="${m.t+10}" font-size="12" fill="currentColor" fill-opacity=".6">coin flip</text>`);
+}
+new ResizeObserver(drawCI).observe(ci);
+
+/* ---------- VRAM budget (estimates; 0.6B measured) ---------- */
+const PARTS=[['Weights','#2aa7e8'],['LoRA, grads and optimiser','#79d23a'],['Activations','#ffd43b'],['CUDA overhead','#9fb3c4'],['Windows desktop','#e2694c']];
+const MODELS={
+ '0.6B':{parts:null,measured:2.85,note:'Measured on your 3080: 2.85 GiB peak in the smoke test, with plenty of headroom.',speed:'Used for 10-minute pipeline checks.'},
+ '1.7B':{parts:[3.4,0.4,1.5,0.8,1.5],note:'bf16 LoRA, about 7.6 GiB estimated. Comfortable, with room for batched RL rollouts.',speed:'Estimated ~8–13 battles/s with single-token actions: about 20,000 PPO battles in a 2-hour run.'},
+ '4B QLoRA':{parts:[2.4,0.6,1.8,0.9,1.5],note:'4-bit QLoRA, about 7.2 GiB estimated. Fits, but quantisation adds noise and it runs slower.',speed:'Estimated ~3–5 battles/s: roughly 6,000–9,000 PPO battles in 2 hours.'},
+ '8B QLoRA':{parts:[4.8,0.9,2.0,1.0,1.5],note:'About 10.2 GiB estimated: right at the usable limit on Windows.',speed:'Estimated ~1 battle/s and a high risk of spilling into system RAM. Too slow for RL.'},
+ '12B QLoRA':{parts:[7.0,1.2,2.2,1.1,1.5],note:'About 13 GiB estimated: over the limit. Windows silently spills into system RAM and training slows 10–30×.',speed:'Not usable for RL on this card.'}};
+const MAXG=14,LIMIT=10.2;
+function drawV(k){
+  document.querySelectorAll('.models button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.k===k));
+  const m=MODELS[k];let left=0,html='';
+  if(m.parts){m.parts.forEach((v,i)=>{html+=`<div class="seg2" style="left:${left/MAXG*100}%;width:${v/MAXG*100}%;background:${PARTS[i][1]}" title="${PARTS[i][0]}: ${v} GiB"></div>`;left+=v})}
+  else{html+=`<div class="seg2" style="left:0;width:${m.measured/MAXG*100}%;background:#2aa7e8" title="Measured peak"></div>`;left=m.measured}
+  html+=`<div class="line" style="left:${LIMIT/MAXG*100}%"><span>usable ≈10.2 GiB</span></div><div class="line l12" style="left:${12/MAXG*100}%"><span>12 GiB card</span></div>`;
+  $('vbar').innerHTML=html;
+  $('vtotal').textContent=(m.parts?'≈':'')+left.toFixed(1)+' GiB';
+  $('vnote').textContent=m.note;$('vspeed').textContent=m.speed;
+}
+$('vlegend').innerHTML=PARTS.map(p=>`<span><i style="background:${p[1]}"></i>${p[0]}</span>`).join('');
+document.querySelector('.models').onclick=e=>{const b=e.target.closest('button');if(b)drawV(b.dataset.k)};
+drawV('1.7B');
+}
+</script>
+<script>{
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+/* nav tabs follow the section being read */
+const tabs=[...document.querySelectorAll('.navtabs a[href^="#"]')];
+const secs=tabs.map(a=>document.querySelector(a.getAttribute('href')));
+function spy(){let cur=null;for(const s of secs){if(s&&s.getBoundingClientRect().top<innerHeight*.4)cur=s}tabs.forEach(a=>a.setAttribute('aria-current',cur&&a.getAttribute('href')==='#'+cur.id?'true':'false'))}
+addEventListener('scroll',spy,{passive:true});spy();
+/* windows open like Vista windows as they scroll in */
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}}),{threshold:.08});
+document.querySelectorAll('.reveal').forEach(w=>reduce?w.classList.add('in'):io.observe(w));
+/* bubbles in the hero */
+const hero=document.querySelector('.hero'),bubbles=[];let popped=0;const pc=document.getElementById('tPop');
+function spawn(initial){const b=document.createElement('button'),s=16+Math.random()*44;b.className='bubble';b.setAttribute('aria-label','Pop bubble');b.style.width=b.style.height=s+'px';
+ const B={el:b,s,x:Math.random()*(hero.clientWidth-s),y:initial?Math.random()*hero.clientHeight:hero.clientHeight+10,v:.3+Math.random()*.5,ph:Math.random()*6};
+ b.onclick=()=>{if(B.dead)return;B.dead=true;b.classList.add('pop');popped++;if(pc)pc.textContent=popped;setTimeout(()=>{b.remove();bubbles.splice(bubbles.indexOf(B),1);spawn(false)},260)};hero.appendChild(b);bubbles.push(B)}
+for(let i=0;i<11;i++)spawn(true);
+function tick(){if(!reduce)for(const B of bubbles){if(B.dead)continue;B.y-=B.v;B.ph+=.015;if(B.y<-B.s-10){B.y=hero.clientHeight+10;B.x=Math.random()*(hero.clientWidth-B.s)}B.el.style.transform=`translate(${B.x+Math.sin(B.ph)*12}px,${B.y}px)`}requestAnimationFrame(tick)}
+tick();
+}
+</script>
+</body></html>
